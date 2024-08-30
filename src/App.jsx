@@ -27,27 +27,103 @@ function App() {
     ],
   };
 
+  let handleMessageFromPeer = async (message, MemberId) => {
+    message = JSON.parse(message.text);
+    console.log(`MESSAGE FROM PEER ${JSON.stringify(message)}`);
+    if (message.type === "offer") {
+      createAnswer(MemberId, message.offer);
+    }
+    if (message.type === "answer") {
+      addAnswer(message.answer);
+    }
+    if (message.type === "candidate") {
+      if (peerConnection) {
+        peerConnection.addIceCandidate(message.candidate);
+      }
+    }
+  };
+
+  const handleUserJoined = (MemberId) => {
+    console.log(`user joined ${MemberId}`);
+    createOffer(MemberId);
+  };
+
+  const createOffer = async (MemberId) => {
+    await createPeerConnection(MemberId);
+    let offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer); // <- trigger generation of ice candidates
+
+    //TODO: from here
+    client.sendMessageToPeer(
+      { text: JSON.stringify({ type: "offer", offer: offer }) },
+      MemberId,
+    );
+
+    console.log(`offer: ${offer}`);
+  };
+
+  let createPeerConnection = async (MemberId) => {
+    const pc = new RTCPeerConnection(servers);
+    setPeerConnection(pc);
+    remoteStream = new MediaStream();
+    user2Ref.srcObject = remoteStream;
+
+    if (!localStream) {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
+      user1Ref.current.srcObject = localStream;
+    }
+
+    localStream.getTracks().forEach((track) => {
+      if (pc || peerConnection) {
+        pc.addTrack(track, localStream);
+      } else {
+        console.log(`PEERCONNECTION NOT FOUND TO ADD TRACKS`);
+      }
+    });
+
+    pc.ontrack = (event) => {
+      event.streams[0].getTracks().forEach((track) => {
+        remoteStream.addTrack(track);
+      });
+    };
+
+    pc.onicecandidate = async (event) => {
+      if (event.candidate) {
+        client.sendMessageToPeer(
+          {
+            text: JSON.stringify({
+              type: "candidate",
+              candidate: event.candidate,
+            }),
+          },
+          MemberId,
+        );
+      }
+    };
+  };
+
+  const createAnswer = async (MemberID, offer) => {
+    await createPeerConnection(MemberID);
+    await peerConnection.setRemoteDescription(offer);
+    let answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+
+    client.sendMessageToPeer({
+      text: JSON.stringify({ type: "answer", answer: answer }),
+    });
+  };
+
+  const addAnswer = async (answer) => {
+    //add receivd answer as remoteDesc
+    if (!peerConnection.currentRemoteDescription) {
+      await peerConnection.setRemoteDescription(answer);
+    }
+  };
+
   useEffect(() => {
-    let handleMessageFromPeer = async (message, MemberId) => {
-      message = JSON.parse(message.text);
-      if (message.type === "offer") {
-        createAnswer(MemberId, message.offer);
-      }
-      if (message.type === "answer") {
-        addAnswer(message.answer);
-      }
-      if (message.type === "candidate") {
-        if (peerConnection) {
-          peerConnection.addIceCandidate(message.candidate);
-        }
-      }
-    };
-
-    const handleUserJoined = (MemberId) => {
-      console.log(`user joined ${MemberId}`);
-      createOffer(MemberId);
-    };
-
     let init = async () => {
       alert("give perimsion");
       client = AgoraRTM.createInstance(APP_ID);
@@ -69,53 +145,8 @@ function App() {
         user1Ref.current.srcObject = lstream;
       }
     };
+
     init();
-
-    const addAnswer = async () => {};
-    const createAnswer = async (MemberID) => {};
-
-    const createOffer = async (MemberId) => {
-      const pc = new RTCPeerConnection(servers);
-      setPeerConnection(pc);
-
-      const rstream = new MediaStream();
-      user2Ref.current.srcObject = rstream;
-
-      localStream.getTracks().forEach((track) => {
-        peerConnection.addTrack(track, localStream);
-      });
-      //for the 2nd video to have remote conn's output
-      pc.ontrack = (ev) => {
-        ev.streams[0].getTracks().forEach((track) => {
-          rstream.addTrack(track);
-        });
-      };
-
-      pc.onicecandidate = (ev) => {
-        if (ev.candidate) {
-          client.sendMessageToPeer(
-            {
-              text: JSON.stringify({
-                type: "candidate",
-                candidate: ev.candidate,
-              }),
-            },
-            MemberId,
-          );
-        }
-      };
-
-      let offer = await pc.createOffer();
-      await pc.setLocalDescription(offer); // <- trigger generation of ice candidates
-
-      //TODO: from here
-      client.sendMessageToPeer(
-        { text: JSON.stringify({ type: "offer", offer: offer }) },
-        MemberId,
-      );
-
-      console.log(`offer: ${offer}`);
-    };
   }, []);
   return (
     <>

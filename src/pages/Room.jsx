@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useSocket } from "../context/SocketProvider.jsx";
 import { toast } from "react-hot-toast";
 import { useCallback } from "react";
@@ -8,7 +8,6 @@ import peer from "../services/peer.js";
 const Room = () => {
   let [myStream, setMyStream] = useState(null);
   let [remoteStream, setRemoteStream] = useState(null);
-  // let [peerConnection, setPeerConnection] = useState(null);
   const socket = useSocket();
   const [remoteSocketId, setRemoteSocketId] = useState(null);
 
@@ -37,16 +36,61 @@ const Room = () => {
     const ans = await peer.getAnswer(offer);
     socket.emit("call:accepted", { to: from, answer: ans });
   }, []);
-  const handleCallAccepted = useCallback(async ({ from, answer }) => {
-    console.log(
-      `call accepted sucxfuli set remote desc ${JSON.stringify(answer)}`,
-    );
-    await peer.setLocalDescription(answer);
+
+  const handleNegoNeeded = useCallback(async () => {
+    const offer = await peer.getOffer();
+    socket.emit("peer:nego:needed", { offer, to: remoteSocketId });
+  }, [remoteSocketId, socket]);
+
+  useEffect(() => {
+    peer.peer.addEventListener("negotiationneeded", handleNegoNeeded);
+    return () => {
+      peer.peer.removeEventListener("negotiationneeded", handleNegoNeeded);
+    };
+  }, [handleNegoNeeded]);
+
+  const handleNegoNeedIncomming = useCallback(
+    async ({ from, offer }) => {
+      const ans = await peer.getAnswer(offer);
+      socket.emit("peer:nego:done", { to: from, ans });
+    },
+    [socket],
+  );
+
+  const handleNegoNeedFinal = useCallback(async ({ ans }) => {
+    await peer.setLocalDescription(ans);
   }, []);
+
+  const sendStreams = useCallback(() => {
+    for (const track of myStream.getTracks()) {
+      peer.peer.addTrack(track, myStream);
+    }
+  }, [myStream]);
+  const handleCallAccepted = useCallback(
+    async ({ from, answer }) => {
+      await peer.setLocalDescription(answer);
+      console.log(
+        `call accepted sucxfuli set remote desc ${JSON.stringify(answer)}`,
+      );
+      sendStreams();
+    },
+    [sendStreams],
+  );
+
+  useEffect(() => {
+    peer.peer.addEventListener("track", async (ev) => {
+      const remoteStream = ev.streams;
+      console.log(`got streams`);
+      setRemoteStream(remoteStream[0]);
+    });
+  }, []);
+
   useEffect(() => {
     socket.on("user:join", handleUserJoined);
     socket.on("incoming:call", handleIncomingCall);
     socket.on("call:accepted", handleCallAccepted);
+    socket.on("peer:nego:needed", handleNegoNeedIncomming);
+    socket.on("peer:nego:final", handleNegoNeedFinal);
 
     //FIX: socket is not used here
 
@@ -179,22 +223,41 @@ const Room = () => {
     //   }
     // };
     return () => {
-      socket.off("user:join");
-      socket.off("incoming:call");
-      socket.off("call:accepted");
+      socket.off("user:join", handleUserJoined);
+      socket.off("incoming:call", handleIncomingCall);
+      socket.off("call:accepted", handleCallAccepted);
+      socket.off("peer:nego:needed", handleNegoNeedIncomming);
+      socket.off("peer:nego:final", handleNegoNeedFinal);
     };
-  }, [socket, handleUserJoined, handleIncomingCall, handleCallAccepted]);
+  }, [
+    socket,
+    handleUserJoined,
+    handleIncomingCall,
+    handleCallAccepted,
+    handleNegoNeedIncomming,
+    handleNegoNeedFinal,
+  ]);
 
   return (
     <>
       <p>video-player</p>
+      {myStream && <button onClick={sendStreams}>Send Stream</button>}
       <p>{remoteSocketId ? "Connected" : "No one in room"}</p>
-      <div id="videos">
+      <div>
         {myStream && (
           <ReactPlayer
-            width="200px"
-            height="100px"
+            width="400px"
+            height="300px"
             url={myStream}
+            playing
+            muted
+          />
+        )}
+        {remoteStream && (
+          <ReactPlayer
+            width="300px"
+            height="200px"
+            url={remoteStream}
             playing
             muted
           />

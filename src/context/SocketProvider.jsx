@@ -13,7 +13,8 @@ export const SocketProvider = ({ children }) => {
     transports: ["websocket"],
   };
   const socket = useMemo(
-    () => io(import.meta.env.APP_BACKEND_URL || "localhost:4000", initOpts),
+    () =>
+      io(import.meta.env.VITE_APP_BACKEND_URL || "localhost:4000", initOpts),
     [],
   );
 

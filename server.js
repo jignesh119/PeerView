@@ -19,6 +19,13 @@ io.on("connection", (socket) => {
     io.in(room).emit("user:join", { email, id: socket.id });
     io.to(socket.id).emit("room:join", { email, room });
   });
+  socket.on("user:call", ({ to, offer }) => {
+    console.log(`user calling ${to} `);
+    io.to(to).emit("incoming:call", { from: socket.id, offer });
+  });
+  socket.on("call:accepted", ({ to, answer }) => {
+    io.to(to).emit("call:accepted", { from: socket.id, answer: answer });
+  });
 });
 
 const PORT = process.env.PORT || 4000;

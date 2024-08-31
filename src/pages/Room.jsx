@@ -2,28 +2,16 @@ import React, { useRef, useState, useEffect } from "react";
 import { useSocket } from "../context/SocketProvider.jsx";
 import { toast } from "react-hot-toast";
 import { useCallback } from "react";
-import { ReactPlayer } from "react-player";
+import ReactPlayer from "react-player";
+import peer from "../services/peer.js";
 
 const Room = () => {
   let [myStream, setMyStream] = useState(null);
   let [remoteStream, setRemoteStream] = useState(null);
   // let [peerConnection, setPeerConnection] = useState(null);
-  const user1Ref = useRef();
-  const user2Ref = useRef();
   const socket = useSocket();
   const [remoteSocketId, setRemoteSocketId] = useState(null);
 
-  //NOTE: stun servers not needed in dev, but in prod
-  const servers = {
-    iceServers: [
-      {
-        urls: [
-          "stun:stun1.l.google.com:19302",
-          "stun:stun2.l.google.com:19302",
-        ],
-      },
-    ],
-  };
   const handleUserJoined = useCallback(({ email, id }) => {
     console.log(`user joined ${email}`);
     toast.success(`${email} joined`);
@@ -34,14 +22,31 @@ const Room = () => {
       video: true,
       audio: true,
     });
+    const offer = await peer.getOffer();
+    socket.emit("user:call", { to: remoteSocketId, offer });
     setMyStream(stream);
-    if (myStream) {
-      user1Ref.current.srcObject = myStream;
-    }
+  }, [remoteSocketId, socket]);
+  const handleIncomingCall = useCallback(async ({ from, offer }) => {
+    console.log(`incoming call`);
+    setRemoteSocketId(from);
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true,
+    });
+    setMyStream(stream);
+    const ans = await peer.getAnswer(offer);
+    socket.emit("call:accepted", { to: from, answer: ans });
   }, []);
-
+  const handleCallAccepted = useCallback(async ({ from, answer }) => {
+    console.log(
+      `call accepted sucxfuli set remote desc ${JSON.stringify(answer)}`,
+    );
+    await peer.setLocalDescription(answer);
+  }, []);
   useEffect(() => {
     socket.on("user:join", handleUserJoined);
+    socket.on("incoming:call", handleIncomingCall);
+    socket.on("call:accepted", handleCallAccepted);
 
     //FIX: socket is not used here
 
@@ -175,8 +180,11 @@ const Room = () => {
     // };
     return () => {
       socket.off("user:join");
+      socket.off("incoming:call");
+      socket.off("call:accepted");
     };
-  }, [socket, handleUserJoined]);
+  }, [socket, handleUserJoined, handleIncomingCall, handleCallAccepted]);
+
   return (
     <>
       <p>video-player</p>
@@ -184,15 +192,12 @@ const Room = () => {
       <div id="videos">
         {myStream && (
           <ReactPlayer
-            ref={user1Ref}
             width="200px"
             height="100px"
-            className="video-player"
-            id="user-1"
             url={myStream}
-            playing={true}
+            playing
             muted
-          ></ReactPlayer>
+          />
         )}
       </div>
       <button onClick={handleCallUser}>Call</button>
